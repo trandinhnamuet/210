@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 interface DriveFile {
   id: string
   name: string
+  thumbnailLink?: string
 }
 
 const VALID_ID = /^[a-zA-Z0-9_-]+$/
@@ -16,7 +17,7 @@ async function getChapterImages(folderId: string): Promise<DriveFile[]> {
     'q',
     `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`,
   )
-  url.searchParams.set('fields', 'files(id,name)')
+  url.searchParams.set('fields', 'files(id,name,thumbnailLink)')
   url.searchParams.set('orderBy', 'name')
   url.searchParams.set('pageSize', '500')
   url.searchParams.set('key', apiKey)
@@ -85,16 +86,22 @@ export default async function ChapterPage({
             <p className="text-lg">Không có ảnh trong chương này.</p>
           </div>
         ) : (
-          images.map((img, i) => (
+          images.map((img, i) => {
+            // Use Google CDN thumbnail URL directly (avoids server-side proxy 403 from cloud IPs)
+            const src = img.thumbnailLink
+              ? img.thumbnailLink.replace(/=s\d+$/, '=s1600')
+              : `/api/img?id=${img.id}`
+            return (
             <img
               key={img.id}
-              src={`/api/img?id=${img.id}`}
+              src={src}
               alt={`Trang ${i + 1}`}
               className="w-full max-w-3xl block"
               loading={i < 3 ? 'eager' : 'lazy'}
               decoding="async"
             />
-          ))
+            )
+          })
         )}
       </div>
 

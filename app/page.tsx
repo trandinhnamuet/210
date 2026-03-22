@@ -11,10 +11,10 @@ function extractFolderId(url: string): string {
   return match?.[1] ?? url
 }
 
-async function getFirstImageId(folderId: string, apiKey: string): Promise<string | null> {
+async function getFirstImageSrc(folderId: string, apiKey: string): Promise<string | null> {
   const url = new URL('https://www.googleapis.com/drive/v3/files')
   url.searchParams.set('q', `'${folderId}' in parents and mimeType contains 'image/'`)
-  url.searchParams.set('fields', 'files(id)')
+  url.searchParams.set('fields', 'files(id,thumbnailLink)')
   url.searchParams.set('orderBy', 'name')
   url.searchParams.set('pageSize', '1')
   url.searchParams.set('key', apiKey)
@@ -22,7 +22,13 @@ async function getFirstImageId(folderId: string, apiKey: string): Promise<string
   const res = await fetch(url.toString(), { next: { revalidate: 3600 } })
   if (!res.ok) return null
   const data = await res.json()
-  return (data.files as { id: string }[])?.[0]?.id ?? null
+  const file = (data.files as { id: string; thumbnailLink?: string }[])?.[0]
+  if (!file) return null
+  // thumbnailLink is a Google CDN URL like https://lh3.googleusercontent.com/...=s220
+  // Bump to a larger size suitable for card covers
+  if (file.thumbnailLink) return file.thumbnailLink.replace(/=s\d+$/, '=s400')
+  // Fallback: proxy-as-redirect route
+  return `/api/img?id=${file.id}&size=thumb`
 }
 
 async function getFolders(): Promise<DriveFolder[]> {
@@ -53,7 +59,7 @@ export default async function HomePage() {
   const chapters = await Promise.all(
     folders.map(async (folder) => ({
       ...folder,
-      thumbnailId: await getFirstImageId(folder.id, apiKey),
+      thumbnailSrc: await getFirstImageSrc(folder.id, apiKey),
     })),
   )
 
@@ -92,9 +98,9 @@ export default async function HomePage() {
                 <div className="rounded-lg overflow-hidden bg-[#1a1a1a] border border-gray-800 group-hover:border-red-500/60 transition-all duration-200 group-hover:shadow-[0_0_20px_rgba(239,68,68,0.15)] group-hover:-translate-y-1">
                   {/* Cover image */}
                   <div className="aspect-[2/3] relative bg-gray-900 overflow-hidden">
-                    {chapter.thumbnailId ? (
+                    {chapter.thumbnailSrc ? (
                       <img
-                        src={`/api/img?id=${chapter.thumbnailId}`}
+                        src={chapter.thumbnailSrc}
                         alt={chapter.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                       />
