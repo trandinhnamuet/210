@@ -75,6 +75,12 @@ export default async function ChapterPage({
           <div className="h-4 w-px bg-gray-700 shrink-0" />
           <h1 className="text-sm font-semibold text-gray-200 truncate">{folderInfo.name}</h1>
           <span className="text-xs text-gray-500 ml-auto shrink-0">{images.length} trang</span>
+          <Link
+            href={`/chapter/${folderId}/translate`}
+            className="flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-2.5 py-1 rounded-full transition-colors shrink-0"
+          >
+            🌐 Dịch
+          </Link>
         </div>
       </nav>
 
