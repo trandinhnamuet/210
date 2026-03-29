@@ -51,6 +51,42 @@ function decodeHtmlEntities(html: string): string {
     .replace(/&#039;/g, "'")
 }
 
+function getBBox(item: unknown): { x: number; y: number; width: number; height: number } | null {
+  const src = item as {
+    bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
+    box?: { x0?: number; y0?: number; x1?: number; y1?: number }
+    x0?: number
+    y0?: number
+    x1?: number
+    y1?: number
+  }
+
+  const x0 = src.bbox?.x0 ?? src.box?.x0 ?? src.x0
+  const y0 = src.bbox?.y0 ?? src.box?.y0 ?? src.y0
+  const x1 = src.bbox?.x1 ?? src.box?.x1 ?? src.x1
+  const y1 = src.bbox?.y1 ?? src.box?.y1 ?? src.y1
+
+  if (
+    typeof x0 !== 'number' ||
+    typeof y0 !== 'number' ||
+    typeof x1 !== 'number' ||
+    typeof y1 !== 'number'
+  ) {
+    return null
+  }
+
+  const width = Math.max(0, x1 - x0)
+  const height = Math.max(0, y1 - y0)
+  if (width <= 2 || height <= 2) return null
+
+  return {
+    x: Math.max(0, x0),
+    y: Math.max(0, y0),
+    width,
+    height,
+  }
+}
+
 function extractLineSegments(data: unknown): Omit<OverlaySegment, 'translatedText'>[] {
   const lines = (data as { lines?: Array<{
     text?: string
@@ -58,26 +94,52 @@ function extractLineSegments(data: unknown): Omit<OverlaySegment, 'translatedTex
     bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
   }> })?.lines ?? []
 
-  return lines
+  const lineSegments = lines
     .map(line => {
       const text = (line.text ?? '').trim()
       const confidence = line.confidence ?? 0
-      const x0 = line.bbox?.x0 ?? 0
-      const y0 = line.bbox?.y0 ?? 0
-      const x1 = line.bbox?.x1 ?? 0
-      const y1 = line.bbox?.y1 ?? 0
+      const box = getBBox(line)
       return {
         sourceText: text,
-        x: Math.max(0, x0),
-        y: Math.max(0, y0),
-        width: Math.max(0, x1 - x0),
-        height: Math.max(0, y1 - y0),
+        x: box?.x ?? 0,
+        y: box?.y ?? 0,
+        width: box?.width ?? 0,
+        height: box?.height ?? 0,
         confidence,
       }
     })
     .filter(seg => seg.sourceText.length >= 1)
-    .filter(seg => seg.width > 3 && seg.height > 3)
-    .filter(seg => seg.confidence >= 20)
+    .filter(seg => seg.width > 2 && seg.height > 2)
+    .filter(seg => seg.confidence >= 8)
+    .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y))
+    .map(({ confidence: _, ...seg }) => seg)
+
+  if (lineSegments.length > 0) return lineSegments
+
+  // Fallback: many manga pages return words but empty lines.
+  const words = (data as { words?: Array<{
+    text?: string
+    confidence?: number
+    bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
+  }> })?.words ?? []
+
+  return words
+    .map(word => {
+      const text = (word.text ?? '').trim()
+      const confidence = word.confidence ?? 0
+      const box = getBBox(word)
+      return {
+        sourceText: text,
+        x: box?.x ?? 0,
+        y: box?.y ?? 0,
+        width: box?.width ?? 0,
+        height: box?.height ?? 0,
+        confidence,
+      }
+    })
+    .filter(seg => seg.sourceText.length >= 1)
+    .filter(seg => seg.width > 2 && seg.height > 2)
+    .filter(seg => seg.confidence >= 5)
     .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y))
     .map(({ confidence: _, ...seg }) => seg)
 }
@@ -92,6 +154,9 @@ async function translateWithMyMemory(text: string): Promise<string> {
   const res = await fetch(url.toString())
   if (!res.ok) throw new Error(`MyMemory HTTP ${res.status}`)
   const data = await res.json()
+  if (data.responseStatus && Number(data.responseStatus) !== 200) {
+    throw new Error(data.responseDetails || 'MyMemory failed')
+  }
 
   const translated: string = data.responseData?.translatedText ?? ''
   if (!translated) throw new Error('Empty translation response')
@@ -209,6 +274,12 @@ export default function TranslateReader({ images, folderName, folderId }: Props)
           updateTranslation(i, { status: 'error', errorMsg: 'OCR thất bại cho trang này' })
         }
       }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'OCR engine lỗi không xác định'
+      if (currentIndex >= 0) {
+        updateTranslation(currentIndex, { status: 'error', errorMsg: message })
+      }
+      console.error('OCR translate error:', error)
     } finally {
       setIsRunning(false)
       setCurrentIndex(-1)
