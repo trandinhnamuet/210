@@ -10,6 +10,15 @@ interface ChapterImage {
   name: string
 }
 
+interface OverlaySegment {
+  sourceText: string
+  translatedText: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 type TranslationLang = 'jpn' | 'chi_sim'
 
 type ImageStatus = 'idle' | 'loading-model' | 'ocr' | 'translating' | 'done' | 'error'
@@ -17,7 +26,7 @@ type ImageStatus = 'idle' | 'loading-model' | 'ocr' | 'translating' | 'done' | '
 interface ImageTranslation {
   status: ImageStatus
   ocrText?: string
-  translatedText?: string
+  segments?: OverlaySegment[]
   errorMsg?: string
 }
 
@@ -42,6 +51,37 @@ function decodeHtmlEntities(html: string): string {
     .replace(/&#039;/g, "'")
 }
 
+function extractLineSegments(data: unknown): Omit<OverlaySegment, 'translatedText'>[] {
+  const lines = (data as { lines?: Array<{
+    text?: string
+    confidence?: number
+    bbox?: { x0?: number; y0?: number; x1?: number; y1?: number }
+  }> })?.lines ?? []
+
+  return lines
+    .map(line => {
+      const text = (line.text ?? '').trim()
+      const confidence = line.confidence ?? 0
+      const x0 = line.bbox?.x0 ?? 0
+      const y0 = line.bbox?.y0 ?? 0
+      const x1 = line.bbox?.x1 ?? 0
+      const y1 = line.bbox?.y1 ?? 0
+      return {
+        sourceText: text,
+        x: Math.max(0, x0),
+        y: Math.max(0, y0),
+        width: Math.max(0, x1 - x0),
+        height: Math.max(0, y1 - y0),
+        confidence,
+      }
+    })
+    .filter(seg => seg.sourceText.length >= 1)
+    .filter(seg => seg.width > 3 && seg.height > 3)
+    .filter(seg => seg.confidence >= 20)
+    .sort((a, b) => (a.y === b.y ? a.x - b.x : a.y - b.y))
+    .map(({ confidence: _, ...seg }) => seg)
+}
+
 async function translateWithMyMemory(text: string): Promise<string> {
   const from = detectApiLang(text)
   // MyMemory free tier: no key needed, CORS-enabled, ~1000 req/day
@@ -64,6 +104,8 @@ export default function TranslateReader({ images, folderName, folderId }: Props)
   const [translations, setTranslations] = useState<Record<number, ImageTranslation>>({})
   const [isRunning, setIsRunning] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(-1)
+  const [imageSize, setImageSize] = useState<Record<number, { width: number; height: number }>>({})
+  const [showOverlay, setShowOverlay] = useState(true)
 
   // Use refs so async loop always has fresh values without recreating the handler
   const workerRef = useRef<Worker | null>(null)
@@ -132,30 +174,37 @@ export default function TranslateReader({ images, folderName, folderId }: Props)
         try {
           const { data } = await workerRef.current!.recognize(images[i].src)
           const text = data.text.trim()
+          const lineSegments = extractLineSegments(data)
 
           // Low confidence or empty → mark done with no-text message
-          if (!text || data.confidence < 15) {
+          if (!text || data.confidence < 15 || lineSegments.length === 0) {
             updateTranslation(i, {
               status: 'done',
               ocrText: '',
-              translatedText: '(Không tìm thấy văn bản trong trang này)',
+              segments: [],
             })
             continue
           }
 
           updateTranslation(i, { status: 'translating', ocrText: text })
 
-          try {
-            const translated = await translateWithMyMemory(text)
-            updateTranslation(i, { status: 'done', ocrText: text, translatedText: translated })
-          } catch {
-            // OCR succeeded but translation failed — still show original text
-            updateTranslation(i, {
-              status: 'done',
-              ocrText: text,
-              translatedText: '(Lỗi dịch tự động — xem văn bản gốc bên dưới)',
-            })
+          const translatedSegments: OverlaySegment[] = []
+          for (const seg of lineSegments) {
+            if (abortRef.current) break
+            try {
+              const translated = await translateWithMyMemory(seg.sourceText)
+              translatedSegments.push({ ...seg, translatedText: translated })
+            } catch {
+              // Fallback to source text for this segment if translation fails.
+              translatedSegments.push({ ...seg, translatedText: seg.sourceText })
+            }
           }
+
+          updateTranslation(i, {
+            status: 'done',
+            ocrText: text,
+            segments: translatedSegments,
+          })
         } catch {
           updateTranslation(i, { status: 'error', errorMsg: 'OCR thất bại cho trang này' })
         }
@@ -197,6 +246,13 @@ export default function TranslateReader({ images, folderName, folderId }: Props)
               <option value="jpn">🇯🇵 Nhật</option>
               <option value="chi_sim">🇨🇳 Trung</option>
             </select>
+
+            <button
+              onClick={() => setShowOverlay(v => !v)}
+              className="flex items-center gap-1.5 bg-gray-700 hover:bg-gray-600 text-white text-xs font-semibold px-3 py-1.5 rounded-full transition-colors"
+            >
+              {showOverlay ? 'Ẩn lớp dịch' : 'Hiện lớp dịch'}
+            </button>
 
             {!isRunning ? (
               <button
@@ -255,7 +311,49 @@ export default function TranslateReader({ images, folderName, folderId }: Props)
                     className="w-full block"
                     loading={i < 3 ? 'eager' : 'lazy'}
                     decoding="async"
+                    onLoad={e => {
+                      const el = e.currentTarget
+                      setImageSize(prev => ({
+                        ...prev,
+                        [i]: {
+                          width: el.naturalWidth,
+                          height: el.naturalHeight,
+                        },
+                      }))
+                    }}
                   />
+
+                  {showOverlay && t.status === 'done' && t.segments && t.segments.length > 0 && imageSize[i] && (
+                    <div className="absolute inset-0 pointer-events-none select-none">
+                      {t.segments.map((seg, segIndex) => {
+                        const width = imageSize[i].width
+                        const height = imageSize[i].height
+                        const left = (seg.x / width) * 100
+                        const top = (seg.y / height) * 100
+                        const segWidth = (seg.width / width) * 100
+                        const segHeight = (seg.height / height) * 100
+
+                        return (
+                          <div
+                            key={`${img.id}-${segIndex}`}
+                            className="absolute bg-white/90 text-black rounded-sm px-1 py-0.5 overflow-hidden"
+                            style={{
+                              left: `${left}%`,
+                              top: `${top}%`,
+                              width: `${segWidth}%`,
+                              minHeight: `${Math.max(segHeight, 1.8)}%`,
+                              fontSize: `clamp(10px, ${Math.max(segHeight * 0.35, 0.7)}vw, 20px)`,
+                              lineHeight: 1.15,
+                            }}
+                            title={seg.sourceText}
+                          >
+                            {seg.translatedText}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+
                   {isActive && (
                     <div className="absolute inset-0 bg-blue-950/30 flex items-end justify-center pb-4 pointer-events-none">
                       <div className="bg-black/80 rounded-lg px-4 py-2 text-xs text-blue-300 animate-pulse">
@@ -267,7 +365,7 @@ export default function TranslateReader({ images, folderName, folderId }: Props)
                   )}
                 </div>
 
-                {/* Translation panel */}
+                {/* OCR status panel */}
                 {t.status !== 'idle' && (
                   <div className="bg-[#0d1117] border-t border-blue-900/30 px-4 py-3">
                     {/* In-progress states */}
@@ -286,12 +384,12 @@ export default function TranslateReader({ images, folderName, folderId }: Props)
 
                     {/* Done */}
                     {t.status === 'done' && (
-                      <div className="space-y-2">
-                        {t.translatedText && (
-                          <p className="text-sm text-gray-100 leading-relaxed whitespace-pre-wrap">
-                            {t.translatedText}
-                          </p>
-                        )}
+                      <div className="space-y-2 text-xs text-gray-400">
+                        <p>
+                          {t.segments && t.segments.length > 0
+                            ? `Đã chèn ${t.segments.length} đoạn dịch đúng vị trí trên ảnh.`
+                            : 'Không tìm thấy văn bản để chèn trên ảnh.'}
+                        </p>
                         {t.ocrText && (
                           <details>
                             <summary className="text-xs text-gray-600 cursor-pointer hover:text-gray-400 select-none">
