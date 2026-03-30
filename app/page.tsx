@@ -31,11 +31,7 @@ async function getFirstImageSrc(folderId: string, apiKey: string): Promise<strin
   return `/api/img?id=${file.id}&size=thumb`
 }
 
-async function getFolders(): Promise<DriveFolder[]> {
-  const apiKey = process.env.GOOGLE_API_KEY ?? ''
-  const rootUrl = process.env.ROOT_FOLDER ?? ''
-  const folderId = extractFolderId(rootUrl)
-
+async function getFoldersFromRoot(folderId: string, apiKey: string): Promise<DriveFolder[]> {
   const url = new URL('https://www.googleapis.com/drive/v3/files')
   url.searchParams.set(
     'q',
@@ -50,6 +46,34 @@ async function getFolders(): Promise<DriveFolder[]> {
   if (!res.ok) return []
   const data = await res.json()
   return (data.files as DriveFolder[]) ?? []
+}
+
+async function getFolders(): Promise<DriveFolder[]> {
+  const apiKey = process.env.GOOGLE_API_KEY ?? ''
+  const rootUrls = [
+    process.env.ROOT_FOLDER,
+    process.env.ROOT_FOLDER2,
+    process.env.ROOT_FOLDER3,
+    process.env.ROOT_FOLDER4,
+  ].filter(Boolean) as string[]
+
+  const results = await Promise.all(
+    rootUrls.map((url) => getFoldersFromRoot(extractFolderId(url), apiKey)),
+  )
+
+  // Merge all folders, deduplicate by id, preserve createdTime desc order
+  const seen = new Set<string>()
+  const merged: DriveFolder[] = []
+  for (const folders of results) {
+    for (const folder of folders) {
+      if (!seen.has(folder.id)) {
+        seen.add(folder.id)
+        merged.push(folder)
+      }
+    }
+  }
+  merged.sort((a, b) => b.createdTime.localeCompare(a.createdTime))
+  return merged
 }
 
 export default async function HomePage() {
