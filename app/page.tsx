@@ -1,9 +1,19 @@
 import Link from 'next/link'
+import { getChapterImages } from './lib/chapter'
+import ChapterGrid from './components/ChapterGrid'
 
 interface DriveFolder {
   id: string
   name: string
   createdTime: string
+}
+
+interface ChapterData {
+  id: string
+  name: string
+  createdTime: string
+  thumbnailSrc: string | null
+  pageCount: number
 }
 
 function extractFolderId(url: string): string {
@@ -29,6 +39,15 @@ async function getFirstImageSrc(folderId: string, apiKey: string): Promise<strin
   if (file.thumbnailLink) return file.thumbnailLink.replace(/=s\d+$/, '=s400')
   // Fallback: proxy-as-redirect route
   return `/api/img?id=${file.id}&size=thumb`
+}
+
+async function getPageCount(folderId: string): Promise<number> {
+  try {
+    const images = await getChapterImages(folderId)
+    return images.length
+  } catch {
+    return 0
+  }
 }
 
 async function getFoldersFromRoot(folderId: string, apiKey: string): Promise<DriveFolder[]> {
@@ -76,16 +95,25 @@ async function getFolders(): Promise<DriveFolder[]> {
   return merged
 }
 
-export default async function HomePage() {
+async function getChaptersData(): Promise<ChapterData[]> {
   const apiKey = process.env.GOOGLE_API_KEY ?? ''
   const folders = await getFolders()
 
   const chapters = await Promise.all(
     folders.map(async (folder) => ({
-      ...folder,
+      id: folder.id,
+      name: folder.name,
+      createdTime: folder.createdTime,
       thumbnailSrc: await getFirstImageSrc(folder.id, apiKey),
+      pageCount: await getPageCount(folder.id),
     })),
   )
+
+  return chapters
+}
+
+export default async function HomePage() {
+  const chapters = await getChaptersData()
 
   return (
     <main className="min-h-screen bg-[#0d0d0d] text-white">
@@ -109,52 +137,7 @@ export default async function HomePage() {
       </div>
 
       {/* Chapter grid */}
-      <div className="max-w-7xl mx-auto px-4 pb-12">
-        {chapters.length === 0 ? (
-          <div className="text-center py-32 text-gray-600">
-            <p className="text-5xl mb-4">📭</p>
-            <p className="text-lg">Không tìm thấy chương nào.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-            {chapters.map((chapter) => (
-              <Link key={chapter.id} href={`/chapter/${chapter.id}`} className="group block">
-                <div className="rounded-lg overflow-hidden bg-[#1a1a1a] border border-gray-800 group-hover:border-red-500/60 transition-all duration-200 group-hover:shadow-[0_0_20px_rgba(239,68,68,0.15)] group-hover:-translate-y-1">
-                  {/* Cover image */}
-                  <div className="aspect-[2/3] relative bg-gray-900 overflow-hidden">
-                    {chapter.thumbnailSrc ? (
-                      <img
-                        src={chapter.thumbnailSrc}
-                        alt={chapter.name}
-                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-gray-800 to-gray-900">
-                        <span className="text-5xl opacity-30">📖</span>
-                      </div>
-                    )}
-                    {/* Overlay gradient */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
-                  </div>
-                  {/* Info */}
-                  <div className="p-2.5">
-                    <p className="text-sm font-semibold text-gray-100 truncate group-hover:text-red-400 transition-colors leading-tight">
-                      {chapter.name}
-                    </p>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {new Date(chapter.createdTime).toLocaleDateString('vi-VN', {
-                        day: '2-digit',
-                        month: '2-digit',
-                        year: 'numeric',
-                      })}
-                    </p>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </div>
+      <ChapterGrid chapters={chapters} />
 
       {/* Footer */}
       <footer className="border-t border-gray-800/50 py-6 text-center text-gray-600 text-xs">
