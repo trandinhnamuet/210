@@ -90,7 +90,7 @@ export default function ChapterGrid({ chapters }: Props) {
                     </p>
                     {chapter.pageCount > 0 && (
                       <div className="text-xs font-semibold text-red-400">
-                        {chapter.pageCount}
+                        {chapter.pageCount}p
                       </div>
                     )}
                   </div>
