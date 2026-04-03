@@ -25,7 +25,6 @@ export default function ChapterGrid({ chapters }: Props) {
     return chapters.filter((chapter) => chapter.name.toLowerCase().includes(query))
   }, [chapters, searchQuery])
 
-  // Connect search input to state
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setSearchQuery(e.target.value)
   }
@@ -62,13 +61,6 @@ export default function ChapterGrid({ chapters }: Props) {
               <div className="rounded-lg overflow-hidden bg-[#1a1a1a] border border-gray-800 group-hover:border-red-500/60 transition-all duration-200 group-hover:shadow-[0_0_20px_rgba(239,68,68,0.15)] group-hover:-translate-y-1">
                 {/* Cover image */}
                 <div className="aspect-[2/3] relative bg-gray-900 overflow-hidden">
-                  {/* Page count badge - top left */}
-                  {chapter.pageCount > 0 && (
-                    <div className="absolute top-2 left-2 z-10 bg-black/60 backdrop-blur-sm rounded-md px-2 py-1 border border-red-500/40">
-                      <span className="text-xs font-semibold text-red-400">{chapter.pageCount}</span>
-                    </div>
-                  )}
-
                   {chapter.thumbnailSrc ? (
                     <img
                       src={chapter.thumbnailSrc}
@@ -88,13 +80,20 @@ export default function ChapterGrid({ chapters }: Props) {
                   <p className="text-sm font-semibold text-gray-100 truncate group-hover:text-red-400 transition-colors leading-tight">
                     {chapter.name}
                   </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    {new Date(chapter.createdTime).toLocaleDateString('vi-VN', {
-                      day: '2-digit',
-                      month: '2-digit',
-                      year: 'numeric',
-                    })}
-                  </p>
+                  <div className="mt-1 flex items-center justify-between">
+                    <p className="text-xs text-gray-500">
+                      {new Date(chapter.createdTime).toLocaleDateString('vi-VN', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      })}
+                    </p>
+                    {chapter.pageCount > 0 && (
+                      <div className="text-xs font-semibold text-red-400">
+                        {chapter.pageCount}
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             </Link>
