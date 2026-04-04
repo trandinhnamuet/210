@@ -18,21 +18,30 @@ export function buildImageSrc(img: DriveFile): string {
 
 export async function getChapterImages(folderId: string): Promise<DriveFile[]> {
   const apiKey = process.env.GOOGLE_API_KEY ?? ''
+  const allFiles: DriveFile[] = []
+  let pageToken: string | undefined
 
-  const url = new URL('https://www.googleapis.com/drive/v3/files')
-  url.searchParams.set(
-    'q',
-    `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`,
-  )
-  url.searchParams.set('fields', 'files(id,name,thumbnailLink)')
-  url.searchParams.set('orderBy', 'name')
-  url.searchParams.set('pageSize', '500')
-  url.searchParams.set('key', apiKey)
+  do {
+    const url = new URL('https://www.googleapis.com/drive/v3/files')
+    url.searchParams.set(
+      'q',
+      `'${folderId}' in parents and mimeType contains 'image/' and trashed = false`,
+    )
+    url.searchParams.set('fields', 'nextPageToken,files(id,name,thumbnailLink)')
+    url.searchParams.set('orderBy', 'name')
+    url.searchParams.set('pageSize', '1000')
+    url.searchParams.set('key', apiKey)
+    if (pageToken) url.searchParams.set('pageToken', pageToken)
 
-  const res = await fetch(url.toString(), { next: { revalidate: 3600 } })
-  if (!res.ok) return []
-  const data = await res.json()
-  return (data.files as DriveFile[]) ?? []
+    const res = await fetch(url.toString(), { next: { revalidate: 3600 } })
+    if (!res.ok) break
+    const data = await res.json()
+    const files = (data.files as DriveFile[]) ?? []
+    allFiles.push(...files)
+    pageToken = data.nextPageToken
+  } while (pageToken)
+
+  return allFiles
 }
 
 export async function getFolderInfo(folderId: string): Promise<{ name: string } | null> {
