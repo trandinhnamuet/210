@@ -21,6 +21,20 @@ export async function getChapterImages(folderId: string): Promise<DriveFile[]> {
   const allFiles: DriveFile[] = []
   let pageToken: string | undefined
 
+  async function fetchWithRetry(url: string, opts: RequestInit = {}, retries = 3, backoffMs = 1000) {
+    for (let attempt = 0; attempt < retries; attempt++) {
+      try {
+        const res = await fetch(url, opts)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return await res.json()
+      } catch (err) {
+        const last = attempt === retries - 1
+        if (last) throw err
+        await new Promise((r) => setTimeout(r, backoffMs * Math.pow(2, attempt)))
+      }
+    }
+  }
+
   do {
     const url = new URL('https://www.googleapis.com/drive/v3/files')
     url.searchParams.set(
@@ -33,12 +47,15 @@ export async function getChapterImages(folderId: string): Promise<DriveFile[]> {
     url.searchParams.set('key', apiKey)
     if (pageToken) url.searchParams.set('pageToken', pageToken)
 
-    const res = await fetch(url.toString(), { next: { revalidate: 3600 } })
-    if (!res.ok) break
-    const data = await res.json()
-    const files = (data.files as DriveFile[]) ?? []
-    allFiles.push(...files)
-    pageToken = data.nextPageToken
+    try {
+      const data = await fetchWithRetry(url.toString(), { next: { revalidate: 3600 } })
+      const files = (data.files as DriveFile[]) ?? []
+      allFiles.push(...files)
+      pageToken = data.nextPageToken
+    } catch (err) {
+      // Persistent fetch failure (network/timeout); stop and return what we have
+      break
+    }
   } while (pageToken)
 
   return allFiles

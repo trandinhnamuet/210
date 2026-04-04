@@ -99,15 +99,22 @@ async function getChaptersData(): Promise<ChapterData[]> {
   const apiKey = process.env.GOOGLE_API_KEY ?? ''
   const folders = await getFolders()
 
-  const chapters = await Promise.all(
-    folders.map(async (folder) => ({
-      id: folder.id,
-      name: folder.name,
-      createdTime: folder.createdTime,
-      thumbnailSrc: await getFirstImageSrc(folder.id, apiKey),
-      pageCount: await getPageCount(folder.id),
-    })),
-  )
+  const concurrency = parseInt(process.env.CHAPTER_FETCH_CONCURRENCY ?? '3', 10)
+  const chapters: ChapterData[] = []
+
+  for (let i = 0; i < folders.length; i += concurrency) {
+    const batch = folders.slice(i, i + concurrency)
+    const batchResults = await Promise.all(
+      batch.map(async (folder) => ({
+        id: folder.id,
+        name: folder.name,
+        createdTime: folder.createdTime,
+        thumbnailSrc: await getFirstImageSrc(folder.id, apiKey),
+        pageCount: await getPageCount(folder.id),
+      })),
+    )
+    chapters.push(...batchResults)
+  }
 
   return chapters
 }
