@@ -7,6 +7,8 @@ import {
   buildImageSrc,
 } from '@/app/lib/chapter'
 
+export const dynamic = 'force-dynamic'
+
 export default async function ChapterPage({
   params,
 }: {
